@@ -2,6 +2,8 @@
 
 This repository contains a simple sdl2 backend implementation in Zig, leverage the use of zig-nuklear immediate GUI for zig.
 
+zig version 0.8
+
 
 ## SDL2 backend implementation
 
