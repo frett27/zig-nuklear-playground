@@ -1,5 +1,10 @@
 # Zig-Nuklear playground
 
-This repo is a work in progress to evaluate the zig-nuklear library, and associated ability to implements a graphics backend in zig, 
+This repository contains a simple sdl2 backend implementation in Zig, leverage the use of zig-nuklear immediate GUI for zig.
 
-See develop branch for more code and information
+
+## SDL2 backend implementation
+
+This backend needs SDL dev libs installed, 
+the SDL2_gfx repository also needs to be compiled and build
+
