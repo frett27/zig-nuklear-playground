@@ -128,33 +128,25 @@ pub const Driver = struct {
                         const color = curve.color;
                         // try checkSDLError(SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a));
 
-
                         const n = 4;
                         var vx: []Sint16 = try self.allocator.alloc(Sint16, n);
                         defer self.allocator.free(vx);
                         var vy: []Sint16 = try self.allocator.alloc(Sint16, n);
                         defer self.allocator.free(vy);
 
-                            vx[0] = @intCast(Sint16, curve.begin.x);
-                            vy[0] = @intCast(Sint16, curve.begin.y);
+                        vx[0] = @intCast(Sint16, curve.begin.x);
+                        vy[0] = @intCast(Sint16, curve.begin.y);
 
-                            
-                            vx[1] = @intCast(Sint16, curve.ctrl[0].x);
-                            vy[1] = @intCast(Sint16, curve.ctrl[0].y);
+                        vx[1] = @intCast(Sint16, curve.ctrl[0].x);
+                        vy[1] = @intCast(Sint16, curve.ctrl[0].y);
 
-                            vx[2] = @intCast(Sint16, curve.ctrl[1].x);
-                            vy[2] = @intCast(Sint16, curve.ctrl[1].y);
+                        vx[2] = @intCast(Sint16, curve.ctrl[1].x);
+                        vy[2] = @intCast(Sint16, curve.ctrl[1].y);
 
+                        vx[3] = @intCast(Sint16, curve.end.x);
+                        vy[3] = @intCast(Sint16, curve.end.y);
 
-                            vx[3] = @intCast(Sint16, curve.end.x);
-                            vy[3] = @intCast(Sint16, curve.end.y);
-
-
-                        try checkSDLError(bezierRGBA(renderer, &vx[0], &vy[0], n,2,
-                        color.r, color.g, color.b, color.a
-                        ));
-                        // SDL2_GFXPRIMITIVES_SCOPE int bezierRGBA(SDL_Renderer * renderer, const Sint16 * vx, const Sint16 * vy,
-// int n, int s, Uint8 r, Uint8 g, Uint8 b, Uint8 a);
+                        try checkSDLError(bezierRGBA(renderer, &vx[0], &vy[0], n, 2, color.r, color.g, color.b, color.a));
                     },
                     .rect => {
 
@@ -221,41 +213,13 @@ pub const Driver = struct {
 
                         // ToDo handle l->line_thickness
                         const t = command.triangle_filled;
-                        // convert points
-                        // var i: u32 = 0;
 
-                        // var vx = [_]Sint16{ @intCast(Sint16, t.a.x), @intCast(Sint16, t.b.x), @intCast(Sint16, t.c.x), @intCast(Sint16, t.a.x) };
-
-                        // var vy = [_]Sint16{ @intCast(Sint16, t.a.y), @intCast(Sint16, t.b.y), @intCast(Sint16, t.c.y), @intCast(Sint16, t.a.y) };
-
-                        // try checkSDLError(aapolygonRGBA(renderer, &vx[0], &vy[0], 4, t.color.r, t.color.g, t.color.b, t.color.a));
-                    
-                    try checkSDLError(aatrigonRGBA(renderer,@intCast(Sint16, t.a.x),@intCast(Sint16, t.a.y),
-                    @intCast(Sint16, t.b.x),@intCast(Sint16, t.b.y),
-                    @intCast(Sint16, t.c.x),@intCast(Sint16, t.c.y),
-                    t.color.r, t.color.g, t.color.b, t.color.a
-                     ));
-                    
+                        try checkSDLError(aatrigonRGBA(renderer, @intCast(Sint16, t.a.x), @intCast(Sint16, t.a.y), @intCast(Sint16, t.b.x), @intCast(Sint16, t.b.y), @intCast(Sint16, t.c.x), @intCast(Sint16, t.c.y), t.color.r, t.color.g, t.color.b, t.color.a));
                     },
                     .triangle_filled => {
                         const t = command.triangle_filled;
-                        // // convert points
-                        // var i: u32 = 0;
 
-                        // var vx = [_]Sint16{ @intCast(Sint16, t.a.x), @intCast(Sint16, t.b.x), @intCast(Sint16, t.c.x), @intCast(Sint16, t.a.x) };
-
-                        // var vy = [_]Sint16{ @intCast(Sint16, t.a.y), @intCast(Sint16, t.b.y), @intCast(Sint16, t.c.y), @intCast(Sint16, t.a.y) };
-
-                        // try checkSDLError(filledPolygonRGBA(renderer, &vx[0], &vy[0], 4, t.color.r, t.color.g, t.color.b, t.color.a));
-                    
-
-                      
-                    try checkSDLError(filledTrigonRGBA(renderer,@intCast(Sint16, t.a.x),@intCast(Sint16, t.a.y),
-                    @intCast(Sint16, t.b.x),@intCast(Sint16, t.b.y),
-                    @intCast(Sint16, t.c.x),@intCast(Sint16, t.c.y),
-                    t.color.r, t.color.g, t.color.b, t.color.a
-                     ));
-                    
+                        try checkSDLError(filledTrigonRGBA(renderer, @intCast(Sint16, t.a.x), @intCast(Sint16, t.a.y), @intCast(Sint16, t.b.x), @intCast(Sint16, t.b.y), @intCast(Sint16, t.c.x), @intCast(Sint16, t.c.y), t.color.r, t.color.g, t.color.b, t.color.a));
                     },
                     .polygon => {
 
