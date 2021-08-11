@@ -6,15 +6,12 @@ const ArrayList = std.ArrayList;
 const builtin = @import("builtin");
 const Target = std.Target;
 
-pub fn build(b: *Builder) void {
 
-    const exe = b.addExecutable("first-gui", "first-gui.zig");
+pub fn createSDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
 
+    const exe = b.addExecutable(name, file);
 
-    const target = b.standardTargetOptions(.{});
-
-    exe.setTarget(target);
-
+   
     exe.setBuildMode(b.standardReleaseOptions());
 
     exe.addPackage(.{
@@ -23,7 +20,6 @@ pub fn build(b: *Builder) void {
     });
     
     exe.addIncludeDir("zig-nuklear/src/c");
-
     exe.addObjectFile("zig-nuklear/zig-out/lib/libzig-nuklear.a");
 
 
@@ -49,5 +45,20 @@ pub fn build(b: *Builder) void {
     // exe.strip = true;
     exe.linkLibC();
 
+    return exe;
+}
+
+
+
+pub fn build(b: *Builder) void {
+
+    const exe = createSDLBackend(b, "first-gui", "first-gui.zig");
+    exe.setTarget(b.standardTargetOptions(.{}));
+
+
+    const exe_node = createSDLBackend(b, "nodeeditorapp", "nodeeditorapp.zig");
+    
     b.default_step.dependOn(&exe.step);
+    b.default_step.dependOn(&exe_node.step);
+
 }

@@ -3,7 +3,7 @@ const nk = @import("zig-nuklear");
 
 const nkstyle = @import("nk-style.zig");
 
-const nksdl = @import("backend-sdl.zig");
+const nksdl = @import("backends/backend-sdl.zig");
 
 const nodeeditor = @import("node-editor.zig");
 
