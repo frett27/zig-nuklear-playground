@@ -4,27 +4,27 @@ const nk = @import("zig-nuklear");
 const nksdl = @import("backends/backend-sdl.zig");
 const nkstyle = @import("nk-style.zig");
 
-var test_default_atlas: nk.FontAtlas = undefined;
-var test_default_font: ?*nk.UserFont = null;
+var default_atlas: nk.FontAtlas = undefined;
+var default_font: ?*nk.UserFont = null;
 
-fn testDefaultFont(allocator: *std.mem.Allocator) !*nk.UserFont {
-    if (test_default_font) |res|
+fn createDefaultFont(allocator: *std.mem.Allocator) !*nk.UserFont {
+    if (default_font) |res|
         return res;
 
-    test_default_atlas = nk.atlas.init(allocator);
-    test_default_font = &(try nk.atlas.addDefault(&test_default_atlas, 13, null)).handle;
-    _ = try nk.atlas.bake(&test_default_atlas, .NK_FONT_ATLAS_RGBA32);
-    nk.atlas.end(&test_default_atlas, .{ .id = 0 }, null);
-    const f = test_default_font.?;
+    default_atlas = nk.atlas.init(allocator);
+    default_font = &(try nk.atlas.addDefault(&default_atlas, 13, null)).handle;
+    _ = try nk.atlas.bake(&default_atlas, .NK_FONT_ATLAS_RGBA32);
+    nk.atlas.end(&default_atlas, .{ .id = 0 }, null);
+    const f = default_font.?;
 
-    return test_default_font.?;
+    return default_font.?;
 }
 
 pub fn main() !void {
 
     const globalAllocator = std.heap.c_allocator;
 
-    var font: *nk.UserFont = testDefaultFont(globalAllocator) catch @panic("cannot allocate font");
+    var font: *nk.UserFont = createDefaultFont(globalAllocator) catch @panic("cannot allocate font");
     
     // memory pool for fixed allocator used by nk
     const MAXMEMORY = 2_000_000;
@@ -182,9 +182,8 @@ pub fn main() !void {
             if (nk.chart.begin(&ctx, nk.ChartType.NK_CHART_COLUMN, values.len, 0, 50)) {
                 var it: u32 = 0;
                 defer nk.chart.end(&ctx);
-                while (it < values.len) {
-                    _ = nk.chart.push(&ctx, values[it]);
-                    it += 1;
+                for (values) |value| {
+                    _ = nk.chart.push(&ctx, value);
                 }
             }
 
@@ -192,9 +191,8 @@ pub fn main() !void {
             if (nk.chart.begin(&ctx, nk.ChartType.NK_CHART_LINES, values.len, -0.0, 50.0)) {
                 var it: u32 = 0;
                 defer nk.chart.end(&ctx);
-                while (it < values.len) {
-                    _ = nk.chart.push(&ctx, values[it]);
-                    it += 1;
+                for (values) |value| {
+                    _ = nk.chart.push(&ctx, value);
                 }
             }
             // add label

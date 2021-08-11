@@ -26,6 +26,9 @@ pub fn build(b: *Builder) void {
 
     exe.addObjectFile("zig-nuklear/zig-out/lib/libzig-nuklear.a");
 
+
+    // SDL Software backend dependencies
+
     exe.addIncludeDir("/usr/include");
     exe.addIncludeDir("/usr/include/SDL2");
 
