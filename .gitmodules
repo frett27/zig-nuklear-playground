@@ -1,0 +1,3 @@
+[submodule "zig-nuklear"]
+	path = zig-nuklear
+	url = https://github.com/frett27/zig-nuklear
