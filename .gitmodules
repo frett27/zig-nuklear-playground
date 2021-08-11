@@ -1,3 +1,6 @@
 [submodule "zig-nuklear"]
 	path = zig-nuklear
 	url = https://github.com/frett27/zig-nuklear
+[submodule "backends/sdl2_gfx"]
+	path = backends/sdl2_gfx
+	url = https://github.com/svn2github/sdl2_gfx
