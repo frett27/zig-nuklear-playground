@@ -7,14 +7,9 @@ const builtin = @import("builtin");
 const Target = std.Target;
 
 
-pub fn createSDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
+pub fn addNk(exe : *std.build.LibExeObjStep) void {
 
-    const exe = b.addExecutable(name, file);
-
-   
-    exe.setBuildMode(b.standardReleaseOptions());
-
-    exe.addPackage(.{
+     exe.addPackage(.{
         .name = "zig-nuklear",
         .path = "zig-nuklear/nuklear.zig",
     });
@@ -22,6 +17,15 @@ pub fn createSDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.b
     exe.addIncludeDir("zig-nuklear/src/c");
     exe.addObjectFile("zig-nuklear/zig-out/lib/libzig-nuklear.a");
 
+}
+
+pub fn SDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
+
+    const exe = b.addExecutable(name, file);
+   
+    exe.setBuildMode(b.standardReleaseOptions());
+
+    addNk(exe);
 
     // SDL Software backend dependencies
 
@@ -50,15 +54,33 @@ pub fn createSDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.b
 
 
 
+pub fn X11Backend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
+
+    const exe = b.addExecutable(name, file);
+   
+    exe.setBuildMode(b.standardReleaseOptions());
+
+    addNk(exe);
+
+    exe.linkLibC();
+
+    return exe;
+
+}
+
 pub fn build(b: *Builder) void {
 
-    const exe = createSDLBackend(b, "first-gui", "first-gui.zig");
+    const exe = SDLBackend(b, "first-gui", "first-gui.zig");
     exe.setTarget(b.standardTargetOptions(.{}));
 
 
-    const exe_node = createSDLBackend(b, "nodeeditorapp", "nodeeditorapp.zig");
+    const exe_node = SDLBackend(b, "nodeeditorapp", "nodeeditorapp.zig");
     
-    b.default_step.dependOn(&exe.step);
-    b.default_step.dependOn(&exe_node.step);
+    // b.default_step.dependOn(&exe.step);
+    // b.default_step.dependOn(&exe_node.step);
+
+    const exe_x11 = X11Backend(b, "first-gui-x11", "first-gui-x11.zig");
+
+    b.default_step.dependOn(&exe_x11.step);
 
 }
