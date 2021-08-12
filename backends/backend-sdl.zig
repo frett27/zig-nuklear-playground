@@ -1,5 +1,6 @@
 const nk = @import("zig-nuklear");
 const std = @import("std");
+const backends = @import("backends.zig");
 
 pub usingnamespace @cImport({
     @cInclude("SDL2/SDL.h");
@@ -26,12 +27,58 @@ pub fn deinitSDL() !void {
     SDL_Quit();
 }
 
+pub const Backend = comptime {
+    return try backends.createBackEnd(Driver, SDL_Window); 
+};
+
+pub fn init(allocator: *std.mem.Allocator) !*Backend {
+
+    try initSDL();
+    
+    const winPtr = try createWindow(800,600);
+    const d = try Driver.init(allocator, winPtr);
+    
+    const b = try allocator.create(Backend);
+    
+    b._loadImage = &Driver.loadImage;
+    b._freeImage = &Driver.freeImage;
+    
+    b._createWindow = &createWindow;
+
+    b._render = &Driver.render;
+    b._handleAllCurrentEvents = &Driver.handleAllCurrentEvents;
+    
+    try b.wrap(d,winPtr);
+
+    return b;
+}
+
+////////////////////////////////////////////////////////////////////
+
+var default_atlas: nk.FontAtlas = undefined;
+var default_font: ?*nk.UserFont = null;
+
+fn createDefaultFont(allocator: *std.mem.Allocator) !*nk.UserFont {
+    if (default_font) |res|
+        return res;
+
+    default_atlas = nk.atlas.init(allocator);
+    default_font = &(try nk.atlas.addDefault(&default_atlas, 13, null)).handle;
+    _ = try nk.atlas.bake(&default_atlas, .NK_FONT_ATLAS_RGBA32);
+    nk.atlas.end(&default_atlas, .{ .id = 0 }, null);
+    const f = default_font.?;
+
+    return default_font.?;
+}
+
+
 ////////////////////////////////////////////////////////////////////
 // SDL Specific functions
 
-pub fn createWindow() !*SDL_Window {
-    var win = if (SDL_CreateWindow("Demo", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_SHOWN |
-        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE)) |w| w else unreachable;
+pub fn createWindow(w: u32, h:u32) anyerror!*SDL_Window {
+    var win = if (SDL_CreateWindow("Demo", SDL_WINDOWPOS_CENTERED, 
+        SDL_WINDOWPOS_CENTERED, @intCast(c_int,w),@intCast(c_int, h), SDL_WINDOW_SHOWN |
+        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE)) |curwin| curwin else unreachable;
 
     return win;
 }
@@ -46,6 +93,7 @@ fn toDegree(a: f32) i16 {
 // nk context is not part of the driver
 //
 pub const Driver = struct {
+
     const Self = @This();
 
     renderer: *SDL_Renderer = undefined,
@@ -65,7 +113,7 @@ pub const Driver = struct {
         return self;
     }
 
-    pub fn loadImage(self: *Self, file: [*c]const u8) !nk.Image {
+    pub fn loadImage(self: *Self, file: [*c]const u8) anyerror!nk.Image {
         var img: ?*SDL_Texture = IMG_LoadTexture(self.renderer, file);
         if (img) |i| {
             return nk.rest.nkImagePtr(i);
@@ -73,14 +121,14 @@ pub const Driver = struct {
         return error.error_loading_image;
     }
 
-    pub fn freeImage(self: *Self, image: nk.nkImage) !void {
-        if (image.img.ptr) |ptr| {
-            SDL_DestroyTexture(ptr);
-            image.img.ptr = null;
+    pub fn freeImage(self: *Self, image: nk.Image) anyerror!void {
+        if (image.handle.ptr) |ptr| {
+            SDL_DestroyTexture(@ptrCast(*SDL_Texture,ptr));
+            
         }
     }
 
-    pub fn render(self: *Self, ctx: *nk.Context, win: *SDL_Window, AA: c_int) !void {
+    pub fn render(self: *Self, ctx: *nk.Context, win: *SDL_Window) anyerror!void {
         var width: c_int = 0;
         var height: c_int = 0;
 
@@ -355,7 +403,7 @@ pub const Driver = struct {
         SDL_RenderPresent(self.renderer);
     }
 
-    pub fn handleAllCurrentEvents(self: *Self, win: *SDL_Window, ctx: *nk.Context) bool {
+    pub fn handleAllCurrentEvents(self: *Self,  ctx: *nk.Context, win: *SDL_Window) anyerror!bool {
 
         // Input handling
         var evt: SDL_Event = undefined;

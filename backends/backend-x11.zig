@@ -33,6 +33,7 @@ const XImageWithAlpha = struct {
     clipMaskGC: GC,
     clipMask: Pixmap,
 };
+
 const XLib = struct {
     clipboard_data: [*]u8,
     clipboard_len: u32,
@@ -50,6 +51,8 @@ const XLib = struct {
     root: Window,
     last_button_click: u32,
 };
+
+var xlib : XLib = .{};
 
 fn nk_xsurf_draw_image(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, img: nk.Image, col: nk.Color) void {
     XImageWithAlpha * aimage = img.handle.ptr;
@@ -384,7 +387,7 @@ fn nk_xlib_handle_event(dpy: *Display, screen: i32, win: Window, evt: *XEvent) u
             while (remain != 0) {
                 XGetWindowProperty(dpy, win, XA_PRIMARY, @as(c_int, pos), 1024, False, AnyPropertyType, &actual_type, &actual_format, &len, &remain, &data);
                 if (len != 0 and data != 0)
-                    nk_textedit_text(xlib.clipboard_target, data, len);
+                    nk.textedit.text(xlib.clipboard_target, data, len);
                 if (data != 0) XFree(data);
                 pos += (len * @as(u64, actual_format)) / 32;
             }

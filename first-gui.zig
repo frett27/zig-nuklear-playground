@@ -36,14 +36,8 @@ pub fn main() !void {
     // switch to initFixed seems more reliable
     var ctx = nk.initFixed(memory, font);
 
-    // init sdl backend
-    try nksdl.initSDL();
-
-    // create the main window
-    var win: *nksdl.SDL_Window = try nksdl.createWindow();
-
-    var nkSDL = try nksdl.Driver.init(globalAllocator, win);
-
+    // init sdl backend, and create window
+    var backend = try nksdl.init(globalAllocator);
 
     nkstyle.setStyle(&ctx, nkstyle.Theme.THEME_BLUE);
 
@@ -68,7 +62,7 @@ pub fn main() !void {
 
     var checkstate = true;
 
-    var img = try nkSDL.loadImage("zig.png");
+    var img = try backend.loadImage("zig.png");
 
     var bounds: nk.Rect = nk.rest.nkGetNullRect();
 
@@ -77,7 +71,7 @@ pub fn main() !void {
     var menu_slider: c_int = 0;
 
     while (running) {
-        running = nkSDL.handleAllCurrentEvents(win, &ctx);
+        running = try backend.handleAllCurrentEvents(&ctx);
 
         // // GUI
         const WindowID = "Demo";
@@ -201,6 +195,6 @@ pub fn main() !void {
         nk.window.end(&ctx);
 
         // Draw
-        try nkSDL.render(&ctx, win, 0);
+       try backend.render(&ctx);
     }
 }

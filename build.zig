@@ -19,6 +19,24 @@ pub fn addNk(exe : *std.build.LibExeObjStep) void {
 
 }
 
+
+pub fn X11Backend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
+
+    const exe = b.addExecutable(name, file);
+   
+    exe.setBuildMode(b.standardReleaseOptions());
+
+    addNk(exe);
+
+
+    exe.addIncludeDir("/usr/include");
+
+    exe.linkLibC();
+
+    return exe;
+
+}
+
 pub fn SDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
 
     const exe = b.addExecutable(name, file);
@@ -54,19 +72,6 @@ pub fn SDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.L
 
 
 
-pub fn X11Backend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.LibExeObjStep {
-
-    const exe = b.addExecutable(name, file);
-   
-    exe.setBuildMode(b.standardReleaseOptions());
-
-    addNk(exe);
-
-    exe.linkLibC();
-
-    return exe;
-
-}
 
 pub fn build(b: *Builder) void {
 
@@ -74,13 +79,13 @@ pub fn build(b: *Builder) void {
     exe.setTarget(b.standardTargetOptions(.{}));
 
 
-    const exe_node = SDLBackend(b, "nodeeditorapp", "nodeeditorapp.zig");
+    //const exe_node = SDLBackend(b, "nodeeditorapp", "nodeeditorapp.zig");
     
-    // b.default_step.dependOn(&exe.step);
+    b.default_step.dependOn(&exe.step);
     // b.default_step.dependOn(&exe_node.step);
 
-    const exe_x11 = X11Backend(b, "first-gui-x11", "first-gui-x11.zig");
+    // const exe_x11 = X11Backend(b, "first-gui-x11", "first-gui-x11.zig");
 
-    b.default_step.dependOn(&exe_x11.step);
+    //b.default_step.dependOn(&exe_x11.step);
 
 }
