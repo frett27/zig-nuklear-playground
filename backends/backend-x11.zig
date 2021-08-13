@@ -1,8 +1,9 @@
 const nk = @import("zig-nuklear");
 const std = @import("std");
+
 const backends = @import("backends.zig");
 
-pub usingnamespace @cImport({
+const x11 = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
@@ -15,57 +16,74 @@ const XFont = struct {
     ascent: i32,
     descent: i32,
     height: i32,
-    set: XFontSet,
-    xfont: *XFontStruct,
-    handle: nk.Font,
+    set: x11.XFontSet,
+    xfont: *x11.XFontStruct,
+    handle: nk.UserFont,
 };
 
 const XSurface = struct {
-    gc: GC,
-    dpy: *Display,
+    gc: x11.GC,
+    dpy: *x11.Display,
     screen: i32,
-    root: Window,
-    drawable: Drawable,
+    root: x11.Window,
+    drawable: x11.Drawable,
     w: u32,
     h: u32,
 };
 const XImageWithAlpha = struct {
-    ximage: *XImage,
-    clipMaskGC: GC,
-    clipMask: Pixmap,
+    ximage: *x11.XImage,
+    clipMaskGC: x11.GC,
+    clipMask: x11.Pixmap,
 };
 
 pub const Backend = comptime {
-    return try backends.createBackEnd(Driver, Window);
+    return try backends.createBackEnd(Driver, XSurface);
 };
+
+pub fn ScreenOfDisplay(dpy: anytype, scr: anytype) @TypeOf(&@import("std").meta.cast(_XPrivDisplay, dpy).*.screens[scr]) {
+    return &@import("std").meta.cast(_XPrivDisplay, dpy).*.screens[scr];
+}
 
 pub fn init(allocator: *std.mem.Allocator) !*Backend {
     
     // init X11 client library
     const currentBackend = try allocator.create(Driver);
 
-    currentBackend.dpy = XOpenDisplay(NULL);
-    if (!currentBackend.dpy) @panic("Could not open a display; perhaps $DISPLAY is not set?");
-    currentBackend.root = DefaultRootWindow(currentBackend.dpy);
-    currentBackend.screen = XDefaultScreen(currentBackend.dpy);
-    currentBackend.vis = XDefaultVisual(currentBackend.dpy, currentBackend.screen);
-    currentBackend.cmap = XCreateColormap(currentBackend.dpy,currentBackend.root,currentBackend.vis,AllocNone);
+    const surf = try allocator.create(XSurface);
+    currentBackend.surf = surf;
+
+    surf.dpy = if (x11.XOpenDisplay(null)) |dpy| dpy else @panic("Could not open a display; perhaps $DISPLAY is not set?");
+    
+    var dpy = surf.dpy;
+
+    surf.screen = x11.XDefaultScreen(dpy);
+
+    //https://github.com/ziglang/zig/issues/5305
+
+    const xpriv = std.meta.cast(x11._XPrivDisplay, dpy).*.screens[@intCast(usize,surf.screen)];
+    const root = xpriv.root;
+    
+    currentBackend.root = root;
+    currentBackend.vis = x11.XDefaultVisual(dpy, surf.screen);
+    currentBackend.cmap = x11.XCreateColormap(dpy,currentBackend.root,currentBackend.vis,x11.AllocNone);
 
     currentBackend.swa.colormap = currentBackend.cmap;
     currentBackend.swa.event_mask =
-        ExposureMask | KeyPressMask | KeyReleaseMask |
-        ButtonPress | ButtonReleaseMask| ButtonMotionMask |
-        Button1MotionMask | Button3MotionMask | Button4MotionMask | Button5MotionMask|
-        PointerMotionMask | KeymapStateMask;
-    currentBackend.win = XCreateWindow(currentBackend.dpy, currentBackend.root, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, 0,
-        XDefaultDepth(currentBackend.dpy, currentBackend.screen), InputOutput,
-        currentBackend.vis, CWEventMask | CWColormap, &currentBackend.swa);
+        x11.ExposureMask | x11.KeyPressMask | x11.KeyReleaseMask |
+        x11.ButtonPress | x11.ButtonReleaseMask| x11.ButtonMotionMask |
+        x11.Button1MotionMask | x11.Button3MotionMask | x11.Button4MotionMask | x11.Button5MotionMask|
+        x11.PointerMotionMask | x11.KeymapStateMask;
+    currentBackend.win = x11.XCreateWindow(currentBackend.dpy, currentBackend.root, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, 0,
+        x11.XDefaultDepth(currentBackend.dpy, currentBackend.screen), x11.InputOutput,
+        currentBackend.vis, x11.CWEventMask | x11.CWColormap, &currentBackend.swa);
 
-    XStoreName(currentBackend.dpy, currentBackend.win, "X11");
-    XMapWindow(currentBackend.dpy, currentBackend.win);
-    currentBackend.wm_delete_window = XInternAtom(currentBackend.dpy, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(currentBackend.dpy, currentBackend.win, &currentBackend.wm_delete_window, 1);
-    XGetWindowAttributes(currentBackend.dpy, currentBackend.win, &currentBackend.attr);
+    x11.XStoreName(surf.dpy, currentBackend.win, "X11");
+    x11.XMapWindow(surf.dpy, currentBackend.win);
+
+    currentBackend.wm_delete_window = x11.XInternAtom(surf.dpy, "WM_DELETE_WINDOW", False);
+    
+    x11.XSetWMProtocols(surf.dpy, currentBackend.win, &currentBackend.wm_delete_window, 1);
+    x11.XGetWindowAttributes(surf.dpy, currentBackend.win, &currentBackend.attr);
     currentBackend.width = currentBackend.attr.width;
     currentBackend.height = currentBackend.attr.height;
 
@@ -489,21 +507,33 @@ const Driver = struct {
 
     clipboard_data: [*]u8,
     clipboard_len: u32,
-    clipboard_target: *nk.text.Edit,
+    clipboard_target: *nk.TextEdit,
 
-    xa_clipboard: Atom,
-    xa_targets: Atom,
-    xa_text: Atom,
-    xa_utf8_string: Atom,
+    xa_clipboard: x11.Atom,
+    xa_targets: x11.Atom,
+    xa_text: x11.Atom,
+    xa_utf8_string: x11.Atom,
 
     ctx: *nk.Context,
     surf: *XSurface,
-    cursor: Cursor,
+    cursor: x11.Cursor,
 
-    dpy: *Display,
-    root: Window,
+    dpy: *x11.Display,
+    root: x11.Window,
 
     last_button_click: u32,
+
+
+    vis: *x11.Visual,
+     cmap: x11.Colormap,
+     attr: x11.XWindowAttributes,
+     swa: x11.XSetWindowAttributes,
+    
+    font: *XFont ,
+
+    wm_delete_window: x11.Atom ,
+
+
 
     fn nk_xsurf_image_free(self: *Self, image: *nk.Image) void {
         XSurface * surf = self.surf;

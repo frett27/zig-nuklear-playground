@@ -39,7 +39,7 @@ pub fn main() !void {
     var ctx = nk.initFixed(memory, font);
 
     // init x11 backend
-    try nkx11.init();
+    try nkx11.init(globalAllocator);
 
     // create the main window
     var win: *nkx11.X11_Window = try nkx11.createWindow();
