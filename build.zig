@@ -75,17 +75,17 @@ pub fn SDLBackend(b:*Builder, name:[]const u8, file:[] const u8 )   *std.build.L
 
 pub fn build(b: *Builder) void {
 
-    const exe = SDLBackend(b, "first-gui", "first-gui.zig");
-    exe.setTarget(b.standardTargetOptions(.{}));
+    //const exe = SDLBackend(b, "first-gui", "first-gui.zig");
+    //exe.setTarget(b.standardTargetOptions(.{}));
 
 
     //const exe_node = SDLBackend(b, "nodeeditorapp", "nodeeditorapp.zig");
     
-    b.default_step.dependOn(&exe.step);
+    // b.default_step.dependOn(&exe.step);
     // b.default_step.dependOn(&exe_node.step);
 
-    // const exe_x11 = X11Backend(b, "first-gui-x11", "first-gui-x11.zig");
+    const exe_x11 = X11Backend(b, "first-gui-x11", "first-gui-x11.zig");
 
-    //b.default_step.dependOn(&exe_x11.step);
+    b.default_step.dependOn(&exe_x11.step);
 
 }
