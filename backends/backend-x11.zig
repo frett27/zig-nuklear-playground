@@ -7,6 +7,12 @@ const x11 = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
+const libc = @cImport({
+    @cInclude("stdlib.h");
+    @cInclude("sys/time.h");
+    
+});
+
 pub fn initX11() !void {}
 
 //////////////////////////////////////////////////////////
@@ -17,18 +23,38 @@ const XFont = struct {
     descent: i32,
     height: i32,
     set: x11.XFontSet,
-    xfont: *x11.XFontStruct,
+    xfont: ?*x11.XFontStruct,
     handle: nk.UserFont,
 };
 
 const XSurface = struct {
+    // graphic context
     gc: x11.GC,
+
+    // display
     dpy: *x11.Display,
+
     screen: i32,
-    root: x11.Window,
+
     drawable: x11.Drawable,
+
     w: u32,
     h: u32,
+
+    // attributes associated to current win
+
+win: x11.Window,
+    vis: *x11.Visual,
+    cmap: x11.Colormap,
+    attr: x11.XWindowAttributes,
+    swa: x11.XSetWindowAttributes,
+
+    font: *XFont,
+
+    wm_delete_window: x11.Atom,
+
+    width: u32,
+    height: u32,
 };
 const XImageWithAlpha = struct {
     ximage: *x11.XImage,
@@ -40,12 +66,8 @@ pub const Backend = comptime {
     return try backends.createBackEnd(Driver, XSurface);
 };
 
-pub fn ScreenOfDisplay(dpy: anytype, scr: anytype) @TypeOf(&@import("std").meta.cast(_XPrivDisplay, dpy).*.screens[scr]) {
-    return &@import("std").meta.cast(_XPrivDisplay, dpy).*.screens[scr];
-}
-
 pub fn init(allocator: *std.mem.Allocator) !*Backend {
-    
+
     // init X11 client library
     const currentBackend = try allocator.create(Driver);
 
@@ -53,137 +75,151 @@ pub fn init(allocator: *std.mem.Allocator) !*Backend {
     currentBackend.surf = surf;
 
     surf.dpy = if (x11.XOpenDisplay(null)) |dpy| dpy else @panic("Could not open a display; perhaps $DISPLAY is not set?");
-    
+
     var dpy = surf.dpy;
 
     surf.screen = x11.XDefaultScreen(dpy);
 
     //https://github.com/ziglang/zig/issues/5305
 
-    const xpriv = std.meta.cast(x11._XPrivDisplay, dpy).*.screens[@intCast(usize,surf.screen)];
+    const xpriv = std.meta.cast(x11._XPrivDisplay, dpy).*.screens[@intCast(usize, surf.screen)];
     const root = xpriv.root;
-    
+
+    currentBackend.dpy = dpy;
     currentBackend.root = root;
-    currentBackend.vis = x11.XDefaultVisual(dpy, surf.screen);
-    currentBackend.cmap = x11.XCreateColormap(dpy,currentBackend.root,currentBackend.vis,x11.AllocNone);
 
-    currentBackend.swa.colormap = currentBackend.cmap;
-    currentBackend.swa.event_mask =
+    // all this associated to xwindow
+
+    surf.vis = x11.XDefaultVisual(dpy, surf.screen);
+    surf.cmap = x11.XCreateColormap(dpy, currentBackend.root, surf.vis, x11.AllocNone);
+
+    //
+
+    surf.swa.colormap = surf.cmap;
+
+    const WINDOW_WIDTH = 800;
+    const WINDOW_HEIGHT = 600;
+
+    surf.swa.event_mask =
         x11.ExposureMask | x11.KeyPressMask | x11.KeyReleaseMask |
-        x11.ButtonPress | x11.ButtonReleaseMask| x11.ButtonMotionMask |
-        x11.Button1MotionMask | x11.Button3MotionMask | x11.Button4MotionMask | x11.Button5MotionMask|
+        x11.ButtonPress | x11.ButtonReleaseMask | x11.ButtonMotionMask |
+        x11.Button1MotionMask | x11.Button3MotionMask | x11.Button4MotionMask | x11.Button5MotionMask |
         x11.PointerMotionMask | x11.KeymapStateMask;
-    currentBackend.win = x11.XCreateWindow(currentBackend.dpy, currentBackend.root, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, 0,
-        x11.XDefaultDepth(currentBackend.dpy, currentBackend.screen), x11.InputOutput,
-        currentBackend.vis, x11.CWEventMask | x11.CWColormap, &currentBackend.swa);
 
-    x11.XStoreName(surf.dpy, currentBackend.win, "X11");
-    x11.XMapWindow(surf.dpy, currentBackend.win);
+    surf.win = x11.XCreateWindow(currentBackend.dpy, currentBackend.root, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, 0, x11.XDefaultDepth(surf.dpy, surf.screen), x11.InputOutput, surf.vis, x11.CWEventMask | x11.CWColormap, &surf.swa);
 
-    currentBackend.wm_delete_window = x11.XInternAtom(surf.dpy, "WM_DELETE_WINDOW", False);
-    
-    x11.XSetWMProtocols(surf.dpy, currentBackend.win, &currentBackend.wm_delete_window, 1);
-    x11.XGetWindowAttributes(surf.dpy, currentBackend.win, &currentBackend.attr);
-    currentBackend.width = currentBackend.attr.width;
-    currentBackend.height = currentBackend.attr.height;
+    _ = x11.XStoreName(surf.dpy, surf.win, "X11");
+    _ = x11.XMapWindow(surf.dpy, surf.win);
 
-    // GUI */
-    currentBackend.font = xfontCreate(currentBackend.dpy, "fixed");
-    
+    surf.wm_delete_window = x11.XInternAtom(surf.dpy, "WM_DELETE_WINDOW", 0);
+
+    _ = x11.XSetWMProtocols(surf.dpy, surf.win, &surf.wm_delete_window, 1);
+
+    // get window attributes
+    _ = x11.XGetWindowAttributes(surf.dpy, surf.win, &surf.attr);
+
+    surf.width = @intCast(u32, surf.attr.width);
+    surf.height = @intCast(u32, surf.attr.height);
+
+    // GUI
+    surf.font = try xfontCreate(allocator, surf.dpy, "fixed");
+
     // ctx = nk_xlib_init(xw.font, xw.dpy, xw.screen, xw.win, xw.width, xw.height);
 
     // backend type
     const b = try allocator.create(Backend);
 
     // vtable
-    b._loadImage = &Driver.loadImage;
-    b._freeImage = &Driver.freeImage;
+//     b._loadImage = &Driver.loadImage;
+//     b._freeImage = &Driver.freeImage;
 
-    b._createWindow = &createWindow;
+//     b._createWindow = &createWindow;
 
     b._render = &Driver.render;
     b._handleAllCurrentEvents = &Driver.handleAllCurrentEvents;
 
-    try b.wrap(currentBackend, winPtr);
+    try b.wrap(currentBackend, surf);
 
     return b;
 }
 
-fn xfontCreate(dpy: *Display, name: [*c]const u8) *XFont {
-    var n: i32 = 0;
-    var def: [*]u8 = undefined;
-    var missing: *[*]u8 = undefined;
+fn xfontCreate(allocator: *std.mem.Allocator,dpy: *x11.Display, name: [*c]const u8) !*XFont {
+    var ncount: c_int = 0;
+    var def: [*c]u8 = undefined;
+    var missing: [*c][*c]u8 = undefined;
 
-    var font = @ptrCast(*XFont, calloc(1, sizeof(XFont)));
+    
+    var font : *XFont = try allocator.create(XFont);
 
-    font.set = XCreateFontSet(dpy, name, &missing, &n, &def);
-    if (missing) {
+    font.set = x11.XCreateFontSet(dpy, name, &missing, &ncount, &def);
+    var n : usize = @intCast(usize, ncount);
+
+    if (missing != null) {
         while (n > 0) : (n -= 1)
-            fprintf(stderr, "missing fontset: %s\n", missing[n]);
-        XFreeStringList(missing);
+            std.debug.print("missing fontset: {s}\n", .{missing[n]});
+        x11.XFreeStringList(missing);
     }
-    if (font.set) {
-        var xfonts: **XFontStruct = undefined;
-        var font_names: *[*]const u8 = undefined;
-        XExtentsOfFontSet(font.set);
-        n = XFontsOfFontSet(font.set, &xfonts, &font_names);
+
+    if (font.set != null) {
+        var xfonts: [*]*x11.XFontStruct = undefined;
+        var font_names: [*c][*c] u8 = undefined;
+        _ = x11.XExtentsOfFontSet(font.set);
+        n = @intCast(usize, x11.XFontsOfFontSet(font.set, @ptrCast([*c][*c][*c]x11.XFontStruct,&xfonts), &font_names));
+        var i: usize = 0;
         while (n > 0) : (n -= 1) {
-            font.ascent = std.math.max(font.ascent, xfonts.*.ascent);
-            font.descent = std.math.max(font.descent, xfonts.*.descent);
-            xfonts += 1;
+            font.ascent = std.math.max(font.ascent, xfonts[i].ascent);
+            font.descent = std.math.max(font.descent, xfonts[i].descent);
+            i += 1;
         }
     } else {
-        font.xfont = XLoadQueryFont(dpy, name);
+        font.xfont = x11.XLoadQueryFont(dpy, name);
 
-        if (font.xfont == 0) {
-            font.xfont = XLoadQueryFont(dpy, "fixed");
-            if (font.xfont == 0) {
-                free(font);
-                return 0;
+        if (font.xfont == null) {
+            font.xfont = x11.XLoadQueryFont(dpy, "fixed");
+            if (font.xfont == null) {
+                allocator.destroy(font);
+                const Cannot_Allocate_Font = error {Error_Font_Loading}; 
+                return Cannot_Allocate_Font.Error_Font_Loading;
             }
         }
-        font.ascent = font.xfont.ascent;
-        font.descent = font.xfont.descent;
+        font.ascent = font.xfont.?.ascent;
+        font.descent = font.xfont.?.descent;
     }
     font.height = font.ascent + font.descent;
     return font;
 }
 
-fn
-nk_timestamp(void)  u64
-{
-    var tv: timeval ;
-    if (gettimeofday(&tv, NULL) < 0) return 0;
-    return (tv.tv_sec * 1000 + tv.tv_usec/1000);
+fn timeStamp() u64 {
+    var tv: libc.timeval = undefined;
+    if (libc.gettimeofday(&tv, null) < 0) return 0;
+    return @intCast(u64,tv.tv_sec) * 1000 + @intCast(u64,@divTrunc(tv.tv_usec , 1000));
 }
 
-fn 
-nk_color_from_byte(color: nk.Color) u64
-{
+fn nk_color_from_byte(color: nk.Color) u64 {
     var res: u64 = 0;
-    res |= color.r << 16;
-    res |= color.g << 8;
-    res |= color.b << 0;
+    res |= @intCast(u32,color.r) << 16;
+    res |= @intCast(u32,color.g) << 8;
+    res |= @intCast(u32,color.b) << 0;
     return res;
 }
 
 fn nk_xsurf_clear(surf: *XSurface, color: nk.Color) void {
-    XSetForeground(surf.dpy, surf.gc, color);
-    XFillRectangle(surf.dpy, surf.drawable, surf.gc, 0, 0, surf.w, surf.h);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, nk_color_from_byte(color));
+    _ = x11.XFillRectangle(surf.dpy, surf.drawable, surf.gc, 0, 0, surf.w, surf.h);
 }
 
 fn nk_xsurf_blit(target: Drawable, surf: *XSurface, w: u32, h: u32) void {
-    XCopyArea(surf.dpy, surf.drawable, target, surf.gc, 0, 0, w, h, 0, 0);
+    x11.XCopyArea(surf.dpy, surf.drawable, target, surf.gc, 0, 0, w, h, 0, 0);
 }
 
 fn nk_xsurf_del(surf: *XSurface) void {
-    XFreePixmap(surf.dpy, surf.drawable);
-    XFreeGC(surf.dpy, surf.gc);
-    free(surf);
+    x11.XFreePixmap(surf.dpy, surf.drawable);
+    x11.XFreeGC(surf.dpy, surf.gc);
+    x11.free(surf);
 }
 
 fn nk_xsurf_draw_image(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, img: nk.Image, col: nk.Color) void {
-    XImageWithAlpha * aimage = @ptrCast(*XImageWithAlpha,img.handle.ptr);
+    XImageWithAlpha * aimage = @ptrCast(*XImageWithAlpha, img.handle.ptr);
     if (aimage) {
         if (aimage.clipMask) {
             XSetClipMask(surf.dpy, surf.gc, aimage.clipMask);
@@ -194,317 +230,273 @@ fn nk_xsurf_draw_image(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, img: nk.
     }
 }
 
+fn nk_xfont_get_text_width(handle: nk.handle, height: f32, text: []const u8, len: u32) f32 {
+    const font: *XFont = @ptrCast(*XFont, handle.ptr);
+    var r: XRectangle;
+    if (!font or !text)
+        return 0;
 
-    fn nk_xfont_get_text_width(handle: nk.handle, height: f32, text: []const u8, len: u32) f32 {
-        const font: *XFont = @ptrCast(*XFont, handle.ptr);
-        var r: XRectangle;
-        if (!font or !text)
-            return 0;
-
-        if (font.set) {
-            XmbTextExtents(font.set, text.ptr, len, NULL, &r);
-            return @intAsFloat(f32, r.width);
-        } else {
-            var w = XTextWidth(font.xfont, text.ptr, len);
-            return @intToFloat(f32, w);
-        }
+    if (font.set) {
+        XmbTextExtents(font.set, text.ptr, len, NULL, &r);
+        return @intAsFloat(f32, r.width);
+    } else {
+        var w = XTextWidth(font.xfont, text.ptr, len);
+        return @intToFloat(f32, w);
     }
-
-    fn nk_xfont_del(dpy: *Display, font: *XFont) void {
-        if (font == null) return;
-        if (font.set != null) {
-            XFreeFontSet(dpy, font.set);
-        } else {
-            XFreeFont(dpy, font.xfont);
-        }
-        free(font);
-    }
-
-     fn nk_xlib_set_font(ctx: *nk.Context, xfont: *XFont) void {
-        const font: *nk_user_font = &xfont.handle;
-        font.userdata = nk_handle_ptr(xfont);
-        font.height = @intToFloat(f32, xfont.height);
-        font.width = nk_xfont_get_text_width;
-        nk_style_set_font(ctx, font);
-    }
-
-    fn nk_xlib_push_font(ctx: *nk.Context, xfont: *XFont) void {
-        const font: *nk_user_font = &xfont.handle;
-        font.userdata = nk_handle_ptr(xfont);
-        font.height = @intToFloat(f32, xfont.height);
-        font.width = nk_xfont_get_text_width;
-        nk_style_push_font(ctx, font);
-    }
-
-    /////////////////////////////////////////////////////////////////
-    // draw facilities
-
-
-fn 
-nk_xsurf_scissor(surf: *XSurface,  x:f32,  y:f32,  w:f32, h: f32) void
-{
-    var clip_rect:XRectangle = undefined ;
-    clip_rect.x = (x-1);
-    clip_rect.y = (y-1);
-    clip_rect.width = (w+2);
-    clip_rect.height = (h+2);
-    XSetClipRectangles(surf.dpy, surf.gc, 0, 0, &clip_rect, 1, Unsorted);
 }
 
-fn
-nk_xsurf_stroke_line(surf: *XSurface,  x0:i16,  y0:i16,  x1:i16,
-     y1: i16, line_thickness: u32,  col: nk_color) void
-{
-    var c:u64 = nk_color_from_byte(col);
-    XSetForeground(surf.dpy, surf.gc, c);
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, x0, y0, x1, y1);
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
+fn nk_xfont_del(dpy: *Display, font: *XFont) void {
+    if (font == null) return;
+    if (font.set != null) {
+        XFreeFontSet(dpy, font.set);
+    } else {
+        XFreeFont(dpy, font.xfont);
+    }
+    free(font);
 }
 
-fn
-nk_xsurf_stroke_rect( surf: *XSurface,  x: i16,  y: i16,  w: u16,
-    h: u16, r: u16,  line_thickness: u16, col: nk.Color) void
-{
-    var c:u64 = nk_color_from_byte(col);
-    XSetForeground(surf.dpy, surf.gc, c);
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    if (r == 0) {XDrawRectangle(surf.dpy, surf.drawable, surf.gc, x, y, w, h);return;}
+fn nk_xlib_set_font(ctx: *nk.Context, xfont: *XFont) void {
+    const font: *nk_user_font = &xfont.handle;
+    font.userdata = nk_handle_ptr(xfont);
+    font.height = @intToFloat(f32, xfont.height);
+    font.width = nk_xfont_get_text_width;
+    nk_style_set_font(ctx, font);
+}
+
+fn nk_xlib_push_font(ctx: *nk.Context, xfont: *XFont) void {
+    const font: *nk_user_font = &xfont.handle;
+    font.userdata = nk_handle_ptr(xfont);
+    font.height = @intToFloat(f32, xfont.height);
+    font.width = nk_xfont_get_text_width;
+    nk_style_push_font(ctx, font);
+}
+
+/////////////////////////////////////////////////////////////////
+// draw facilities
+
+fn nk_xsurf_scissor(surf: *XSurface, x: i16, y: i16, w: u16, h: u16) void {
+    var clip_rect: x11.XRectangle = undefined;
+    clip_rect.x = @intToFloat(f32,(x - 1));
+    clip_rect.y = (y - 1);
+    clip_rect.width = (w + 2);
+    clip_rect.height = (h + 2);
+    _ = x11.XSetClipRectangles(surf.dpy, surf.gc, 0, 0, &clip_rect, 1, x11.Unsorted);
+}
+
+fn nk_xsurf_stroke_line(surf: *XSurface, x0: i16, y0: i16, x1: i16, y1: i16, line_thickness: u32, col: nk.Color) void {
+    var c: u64 = nk_color_from_byte(col);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+    _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, x0, y0, x1, y1);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+}
+
+fn nk_xsurf_stroke_rect(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, r: u16, line_thickness: u16, col: nk.Color) void {
+    var c: u64 = nk_color_from_byte(col);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+    if (r == 0) {
+        _ = x11.XDrawRectangle(surf.dpy, surf.drawable, surf.gc, x, y, w, h);
+        return;
+    }
 
     {
         const xc = x + r;
-    const yc = y + r;
-    const wc = (w - 2 * r);
-    const hc = (h - 2 * r);
+        const yc = y + r;
+        const wc = (w - 2 * r);
+        const hc = (h - 2 * r);
 
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, xc, y, xc+wc, y);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, x+w, yc, x+w, yc+hc);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, xc, y+h, xc+wc, y+h);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, x, yc, x, yc+hc);
+        _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, xc, y, xc + wc, y);
+        _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, x + w, yc, x + w, yc + hc);
+        _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, xc, y + h, xc + wc, y + h);
+        _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, x, yc, x, yc + hc);
 
-    XDrawArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, y,
-        r*2, r*2, 0 * 64, 90 * 64);
-    XDrawArc(surf.dpy, surf.drawable, surf.gc, x, y,
-        r*2, r*2, 90 * 64, 90 * 64);
-    XDrawArc(surf.dpy, surf.drawable, surf.gc, x, yc + hc - r,
-        r*2, 2*r, 180 * 64, 90 * 64);
-    XDrawArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, yc + hc - r,
-        r*2, 2*r, -90 * 64, 90 * 64);}
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
+        _ = x11.XDrawArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, y, r * 2, r * 2, 0 * 64, 90 * 64);
+        _ = x11.XDrawArc(surf.dpy, surf.drawable, surf.gc, x, y, r * 2, r * 2, 90 * 64, 90 * 64);
+        _ = x11.XDrawArc(surf.dpy, surf.drawable, surf.gc, x, yc + hc - r, r * 2, 2 * r, 180 * 64, 90 * 64);
+        _ = x11.XDrawArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, yc + hc - r, r * 2, 2 * r, -90 * 64, 90 * 64);
+    }
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
 }
 
-fn
-nk_xsurf_fill_rect( surf:*XSurface,  x:i16,  y:i16,  w:u16,
-     h:u16,  r:u16,  col:nk.Color) void
-{
+fn nk_xsurf_fill_rect(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, r: u16, col: nk.Color) void {
     var c: u64 = nk_color_from_byte(col);
-    XSetForeground(surf.dpy, surf.gc, c);
-    if (r == 0) {XFillRectangle(surf.dpy, surf.drawable, surf.gc, x, y, w, h); return;}
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    if (r == 0) {
+        _ = x11.XFillRectangle(surf.dpy, surf.drawable, surf.gc, x, y, w, h);
+        return;
+    }
 
-    {const xc = x + r;
-    const yc = y + r;
-    const wc = (w - 2 * r);
-    const hc = (h - 2 * r);
+    {
+        const ir = @intCast(i16,r);
+        const xc = x + ir;
+        const yc = y + ir;
+        const wc = @intCast(i16,(w - 2 * r));
+        const hc = @intCast(i16,(h - 2 * r));
 
-    var pnts:[12]XPoint = undefined;
-    pnts[0].x = x;
-    pnts[0].y = yc;
-    pnts[1].x = xc;
-    pnts[1].y = yc;
-    pnts[2].x = xc;
-    pnts[2].y = y;
+        var pnts: [12]x11.XPoint = undefined;
+        pnts[0].x = x;
+        pnts[0].y = yc;
+        pnts[1].x = xc;
+        pnts[1].y = yc;
+        pnts[2].x = xc;
+        pnts[2].y = y;
 
-    pnts[3].x = xc + wc;
-    pnts[3].y = y;
-    pnts[4].x = xc + wc;
-    pnts[4].y = yc;
-    pnts[5].x = x + w;
-    pnts[5].y = yc;
+        pnts[3].x = xc + @intCast(i16,wc);
+        pnts[3].y = y;
+        pnts[4].x = xc + @intCast(i16,wc);
+        pnts[4].y = yc;
+        pnts[5].x = x + @intCast(i16,w);
+        pnts[5].y = yc;
 
-    pnts[6].x = x + w;
-    pnts[6].y = yc + hc;
-    pnts[7].x = xc + wc;
-    pnts[7].y = yc + hc;
-    pnts[8].x = xc + wc;
-    pnts[8].y = y + h;
+        pnts[6].x = x + @intCast(i16,w);
+        pnts[6].y = yc + hc;
+        pnts[7].x = xc + wc;
+        pnts[7].y = yc + hc;
+        pnts[8].x = xc + wc;
+        pnts[8].y = y + @intCast(i16,h);
 
-    pnts[9].x = xc;
-    pnts[9].y = y + h;
-    pnts[10].x = xc;
-    pnts[10].y = yc + hc;
-    pnts[11].x = x;
-    pnts[11].y = yc + hc;
+        pnts[9].x = xc;
+        pnts[9].y = y + @intCast(i16,h);
+        pnts[10].x = xc;
+        pnts[10].y = yc + hc;
+        pnts[11].x = x;
+        pnts[11].y = yc + hc;
 
-    XFillPolygon(surf.dpy, surf.drawable, surf.gc, pnts, 12, Convex, CoordModeOrigin);
-    XFillArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, y,
-        r*2, r*2, 0 * 64, 90 * 64);
-    XFillArc(surf.dpy, surf.drawable, surf.gc, x, y,
-        r*2, r*2, 90 * 64, 90 * 64);
-    XFillArc(surf.dpy, surf.drawable, surf.gc, x, yc + hc - r,
-        r*2, 2*r, 180 * 64, 90 * 64);
-    XFillArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, yc + hc - r,
-        r*2, 2*r, -90 * 64, 90 * 64);}
+        _ = x11.XFillPolygon(surf.dpy, surf.drawable, surf.gc, &pnts[0], 12, x11.Convex, x11.CoordModeOrigin);
+        _ = x11.XFillArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, y, r * 2, r * 2, 0 * 64, 90 * 64);
+        _ = x11.XFillArc(surf.dpy, surf.drawable, surf.gc, x, y, r * 2, r * 2, 90 * 64, 90 * 64);
+        _ = x11.XFillArc(surf.dpy, surf.drawable, surf.gc, x, yc + hc - r, r * 2, 2 * r, 180 * 64, 90 * 64);
+        _ = x11.XFillArc(surf.dpy, surf.drawable, surf.gc, xc + wc - r, yc + hc - r, r * 2, 2 * r, -90 * 64, 90 * 64);
+    }
 }
 
-fn nk_xsurf_fill_triangle(surf: *XSurface, x0: i16,y0:i16,  x1:i16,
-    y1: i16,  x2:i16,  y2:i16, col: nk.Color) !void
-{
-    var pnts:[3]XPoint = undefined;
+fn nk_xsurf_fill_triangle(surf: *XSurface, x0: i16, y0: i16, x1: i16, y1: i16, x2: i16, y2: i16, col: nk.Color) void {
+    var pnts: [3]x11.XPoint = undefined;
     pnts[0].x = x0;
     pnts[0].y = y0;
     pnts[1].x = x1;
     pnts[1].y = y1;
     pnts[2].x = x2;
     pnts[2].y = y2;
- 
+
     const c = nk_color_from_byte(col);
- 
-    XSetForeground(surf.dpy, surf.gc, c);
-    XFillPolygon(surf.dpy, surf.drawable, surf.gc, pnts, 3, Convex, CoordModeOrigin);
+
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XFillPolygon(surf.dpy, surf.drawable, surf.gc, &pnts[0], 3, x11.Convex, x11.CoordModeOrigin);
 }
 
-
-fn nk_xsurf_stroke_triangle(surf:*XSurface ,  x0:i16,  y0:i16,  x1:i16,
-     y1:i16,  x2:i16,  y2:i16,  line_thickness: u16, col: nk.Color) !void
-{
+fn nk_xsurf_stroke_triangle(surf: *XSurface, x0: i16, y0: i16, x1: i16, y1: i16, x2: i16, y2: i16, line_thickness: u16, col: nk.Color) void {
     const c = nk_color_from_byte(col);
-    XSetForeground(surf.dpy, surf.gc, c);
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, x0, y0, x1, y1);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, x1, y1, x2, y2);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, x2, y2, x0, y0);
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+    _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, x0, y0, x1, y1);
+    _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, x1, y1, x2, y2);
+    _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, x2, y2, x0, y0);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, x11.LineSolid, x11.CapButt, x11.JoinMiter);
 }
 
-
-fn nk_xsurf_fill_polygon(surf: *XSurface, pnts:[]nk.Vect2i,
-    col: nk.Color) !void
-{
+fn nk_xsurf_fill_polygon(surf: *XSurface, pnts: []nk.Vec2, col: nk.Color) !void {
     var i: usize = 0;
     const MAX_POINTS = 128;
-    var xpnts:[MAX_POINTS]XPoint = undefined;
+    var xpnts: [MAX_POINTS]XPoint = undefined;
     const c = nk_color_from_byte(col);
 
-    XSetForeground(surf.dpy, surf.gc, c);
-    while(i < pnts.len and i < MAX_POINTS): (i+=1) {
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    while (i < pnts.len and i < MAX_POINTS) : (i += 1) {
         xpnts[i].x = pnts[i].x;
         xpnts[i].y = pnts[i].y;
     }
-    XFillPolygon(surf.dpy, surf.drawable, surf.gc, xpnts, count, Convex, CoordModeOrigin);
-    
+    _ = x11.XFillPolygon(surf.dpy, surf.drawable, surf.gc, xpnts, count, c11.Convex, x11.CoordModeOrigin);
 }
 
-fn
-nk_xsurf_stroke_polygon(surf: *XSurface , pnts:[]nk.Vect2i,
-     line_thickness: u16, col: nk.Color) void
-{
-     var i: usize = 0;
-    const c = nk_color_from_byte(col);
-    XSetForeground(surf.dpy, surf.gc, c);
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    i = 1;
-    while (i < pnts.len) : (i += 1)
-        XDrawLine(surf.dpy, surf.drawable, surf.gc, pnts[i-1].x, pnts[i-1].y, pnts[i].x, pnts[i].y);
-    XDrawLine(surf.dpy, surf.drawable, surf.gc, pnts[count-1].x, pnts[count-1].y, pnts[0].x, pnts[0].y);
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
-}
-
- 
-fn nk_xsurf_stroke_polyline(surf:*XSurface , pnts:[]nk.Vect2i,
-      line_thickness: u16, col: nk.Color) void
-{
+fn nk_xsurf_stroke_polygon(surf: *XSurface, pnts: []nk.Vec2i, line_thickness: u16, col: nk.Color) void {
     var i: usize = 0;
     const c = nk_color_from_byte(col);
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+    i = 1;
+    const count = pnts.len;
+    while (i < pnts.len) : (i += 1)
+        _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, pnts[i - 1].x, pnts[i - 1].y, pnts[i].x, pnts[i].y);
+    _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, pnts[count - 1].x, pnts[count - 1].y, pnts[0].x, pnts[0].y);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+}
+
+fn nk_xsurf_stroke_polyline(surf: *XSurface, pnts: []nk.Vec2, line_thickness: u16, col: nk.Color) void {
+    var i: usize = 0;
+    const c = nk_color_from_byte(col);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+    _=x11.XSetForeground(surf.dpy, surf.gc, c);
     i = 0;
-    while (i < pnts.len-1): (i+=1)
-        XDrawLine(surf.dpy, surf.drawable, surf.gc, pnts[i].x, pnts[i].y, pnts[i+1].x, pnts[i+1].y);
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
+    while (i < pnts.len - 1) : (i += 1)
+        _ = x11.XDrawLine(surf.dpy, surf.drawable, surf.gc, pnts[i].x, pnts[i].y, pnts[i + 1].x, pnts[i + 1].y);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, x11.LineSolid, x11.CapButt, x11.JoinMiter);
 }
 
-
-fn nk_xsurf_fill_circle(surf: * XSurface , x:i16,  y:i16, w:u16,
-    h:u16, col: nk.Color) void
-{
+fn nk_xsurf_fill_circle(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, col: nk.Color) void {
     const c = nk_color_from_byte(col);
-    XSetForeground(surf.dpy, surf.gc, c);
-    XFillArc(surf.dpy, surf.drawable, surf.gc, x, y,
-        w, h, 0, 360 * 64);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _=x11.XFillArc(surf.dpy, surf.drawable, surf.gc, x, y, w, h, 0, 360 * 64);
 }
 
- 
-fn nk_xsurf_stroke_circle(surf: *XSurface,  x:i16, y: i16,  w:u16,
-    h: u16, line_thickness:u16, col: nk.Color) void
-{
+fn nk_xsurf_stroke_circle(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, line_thickness: u16, col: nk.Color) void {
     const c = nk_color_from_byte(col);
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    XSetForeground(surf.dpy, surf.gc, c);
-    XDrawArc(surf.dpy, surf.drawable, surf.gc, x, y,
-        w, h, 0, 360 * 64);
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, c);
+    _ = x11.XDrawArc(surf.dpy, surf.drawable, surf.gc, x, y, w, h, 0, 360 * 64);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, x11.LineSolid, x11.CapButt, x11.JoinMiter);
 }
 
-
-fn nk_xsurf_stroke_curve(surf: *XSurface ,  p1: nk.Vect2i,
-    p2:nk.Vect2i,  p3:nk.Vect2i, p4:nk.Vect2i,
-     num_segments: u16, line_thickness: u16, col: nk.Color) void
-{
-    var i_step:usize;
+fn nk_xsurf_stroke_curve(surf: *XSurface, p1: nk.Vect2i, p2: nk.Vect2i, p3: nk.Vect2i, p4: nk.Vect2i, num_segments: u16, line_thickness: u16, col: nk.Color) void {
+    var i_step: usize;
     var t_step: f32;
     var last: nk.Vect2i = p1;
 
-    XSetLineAttributes(surf.dpy, surf.gc, line_thickness, LineSolid, CapButt, JoinMiter);
-    num_segments = NK_MAX(num_segments, 1);
-    t_step = 1.0/ @intToFloat(f32, num_segments);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, line_thickness, x11.LineSolid, x11.CapButt, JoinMiter);
+    num_segments = std.math.max(num_segments, 1);
+    t_step = 1.0 / @intToFloat(f32, num_segments);
 
     i_step = 1;
-    while ( i_step < num_segments) : (i_step += 1) {
-        var t:f32 = t_step * @intToFloat(f32,i_step);
-        var  u: f32 = 1.0 - t;
-        var w1:f32 = u*u*u;
-        var  w2:f32 = 3*u*u*t;
-        var  w3:f32 = 3*u*t*t;
-        var  w4:f32 = t * t *t;
-        var  x:f32 = w1 * p1.x + w2 * p2.x + w3 * p3.x + w4 * p4.x;
-        var y:f32 = w1 * p1.y + w2 * p2.y + w3 * p3.y + w4 * p4.y;
-        nk_xsurf_stroke_line(surf, last.x, last.y, x, y, line_thickness,col);
-        last.x = x; last.y = y;
+    while (i_step < num_segments) : (i_step += 1) {
+        var t: f32 = t_step * @intToFloat(f32, i_step);
+        var u: f32 = 1.0 - t;
+        var w1: f32 = u * u * u;
+        var w2: f32 = 3 * u * u * t;
+        var w3: f32 = 3 * u * t * t;
+        var w4: f32 = t * t * t;
+        var x: f32 = w1 * p1.x + w2 * p2.x + w3 * p3.x + w4 * p4.x;
+        var y: f32 = w1 * p1.y + w2 * p2.y + w3 * p3.y + w4 * p4.y;
+        nk_xsurf_stroke_line(surf, last.x, last.y, x, y, line_thickness, col);
+        last.x = x;
+        last.y = y;
     }
-    XSetLineAttributes(surf.dpy, surf.gc, 1, LineSolid, CapButt, JoinMiter);
+    _ = x11.XSetLineAttributes(surf.dpy, surf.gc, 1, x11.LineSolid, x11.CapButt, x11.JoinMiter);
 }
 
-fn
-nk_xsurf_draw_text(surf: *XSurface, x:i16, y:i16, w:u16, h: u16,
-     text: [] const u8, font: *XFont ,  cbg: nk.Color, cfg: nk.Color) void
-{
-    var tx : i32;
+fn nk_xsurf_draw_text(surf: *XSurface, x: i16, y: i16, w: u16, h: u16, text: []const u8, font: *XFont, cbg: nk.Color, cfg: nk.Color) void {
+    var tx: i32;
     var ty: i32;
 
     const bg = nk_color_from_byte(&cbg.r);
     const fg = nk_color_from_byte(&cfg.r);
 
-    XSetForeground(surf.dpy, surf.gc, bg);
-    XFillRectangle(surf.dpy, surf.drawable, surf.gc, x, y, w, h);
-    if(!text || !font || !len) return;
+    _ = x11.XSetForeground(surf.dpy, surf.gc, bg);
+    _ = x11.XFillRectangle(surf.dpy, surf.drawable, surf.gc, x, y, w, h);
+    if (!text || !font || !len) return;
 
     tx = x;
     ty = y + font.ascent;
-    XSetForeground(surf.dpy, surf.gc, fg);
+    _ = x11.XSetForeground(surf.dpy, surf.gc, fg);
 
-    
-
-    if(font.set) {
-        XmbDrawString(surf.dpy,surf.drawable,font.set,surf.gc,tx,ty,text.ptr,text.len);
-    } else { XDrawString(surf.dpy, surf.drawable, surf.gc, tx, ty, text.ptr,text.len);}
+    if (font.set) {
+        _ = x11.XmbDrawString(surf.dpy, surf.drawable, font.set, surf.gc, tx, ty, text.ptr, text.len);
+    } else {
+        _ = x11.XDrawString(surf.dpy, surf.drawable, surf.gc, tx, ty, text.ptr, text.len);
+    }
 }
 
-
-
 const Driver = struct {
-
-    const Self = @This();
-
     clipboard_data: [*]u8,
     clipboard_len: u32,
     clipboard_target: *nk.TextEdit,
@@ -514,39 +506,29 @@ const Driver = struct {
     xa_text: x11.Atom,
     xa_utf8_string: x11.Atom,
 
-    ctx: *nk.Context,
+    // associated surface (displayed window)
     surf: *XSurface,
+
     cursor: x11.Cursor,
 
     dpy: *x11.Display,
-    root: x11.Window,
+    root: x11.Window, // associated display windows
 
     last_button_click: u32,
 
-
-    vis: *x11.Visual,
-     cmap: x11.Colormap,
-     attr: x11.XWindowAttributes,
-     swa: x11.XSetWindowAttributes,
-    
-    font: *XFont ,
-
-    wm_delete_window: x11.Atom ,
-
-
+    const Self = @This();
 
     fn nk_xsurf_image_free(self: *Self, image: *nk.Image) void {
         XSurface * surf = self.surf;
         XImageWithAlpha * aimage = image.handle.ptr;
         if (!aimage) return;
-        XDestroyImage(aimage.ximage);
-        XFreePixmap(surf.dpy, aimage.clipMask);
-        XFreeGC(surf.dpy, aimage.clipMaskGC);
-        free(aimage);
+        x11.XDestroyImage(aimage.ximage);
+        x11.XFreePixmap(surf.dpy, aimage.clipMask);
+        x11.XFreeGC(surf.dpy, aimage.clipMaskGC);
+        libc.free(aimage);
     }
 
-
-    fn nk_xlib_init(self: *Self,xfont: *XFont, dpy: *Display, screen: i32, root: Window, w: u32, h: u32) *nk.Context {
+    fn nk_xlib_init(self: *Self, xfont: *XFont, dpy: *Display, screen: i32, root: Window, w: u32, h: u32) *nk.Context {
         const font: *nk_user_font = &xfont.handle;
         font.userdata = nk_handle_ptr(xfont);
         font.height = @intToFloat(f32, xfont.height);
@@ -578,8 +560,6 @@ const Driver = struct {
         return &self.ctx;
     }
 
-   
-
     fn nk_xlib_paste(self: *Self, handle: nk_handle, edit: *nk_text_edit) void {
         // NK_UNUSED(handle);
         // Paste in X is asynchronous, so can not use a temporary text edit
@@ -590,45 +570,55 @@ const Driver = struct {
     }
 
     fn nk_xlib_copy(self: *Self, handle: nk_handle, str: []u8, len: u32) void {
-        NK_UNUSED(handle);
-        free(xlib.clipboard_data);
+        // NK_UNUSED(handle);
+        x11.free(xlib.clipboard_data);
         self.clipboard_len = 0;
-        self.clipboard_data = malloc(@as(usize, len));
+        self.clipboard_data = x11.malloc(@as(usize, len));
         if (self.clipboard_data) {
             memcpy(xlib.clipboard_data, str, @as(usize, len));
             self.clipboard_len = len;
-            XSetSelectionOwner(self.dpy, XA_PRIMARY, self.root, CurrentTime);
-            XSetSelectionOwner(self.dpy, self.xa_clipboard, self.root, CurrentTime);
+            x11.XSetSelectionOwner(self.dpy, XA_PRIMARY, self.root, CurrentTime);
+            x11.XSetSelectionOwner(self.dpy, self.xa_clipboard, self.root, CurrentTime);
         }
     }
-
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // event handling
 
-    fn handleAllCurrentEvents(self.backend, ctx, self.win) anyerror!bool {
+    fn handleAllCurrentEvents(self: *Self, ctx:*nk.Context, surf: *XSurface) anyerror!bool {
+          
+        var evt:x11.XEvent = undefined;
+        var started = timeStamp();
+        nk.input.begin(ctx);
+        defer nk.input.end(ctx);
 
+        while (x11.XPending(surf.dpy) > 0) {
+            _ = x11.XNextEvent(surf.dpy, &evt);
+            if (evt.type == x11.ClientMessage) return true; // end ??
+            if (x11.XFilterEvent(&evt, surf.win) != 0) continue;
+            _= self.nk_xlib_handle_event(ctx, surf.dpy, surf.screen, surf.win, &evt);
+        }
+        
         return false;
     }
 
-    fn nk_xlib_handle_event(self: *Self, dpy: *Display, screen: i32, win: Window, evt: *XEvent) u32 {
-        const ctx = &xlib.ctx;
-
+    fn nk_xlib_handle_event(self: *Self, ctx: *nk.Context , dpy: *x11.Display, screen: i32, win: x11.Window, evt: *x11.XEvent) u32 {
+        
         // optional grabbing behavior
-        if (ctx.input.mouse.grab) {
-            XDefineCursor(xlib.dpy, xlib.root, xlib.cursor);
+        if (ctx.input.mouse.grab != 0) {
+            _ = x11.XDefineCursor(dpy, win, self.cursor);
             ctx.input.mouse.grab = 0;
-        } else if (ctx.input.mouse.ungrab) {
-            XWarpPointer(xlib.dpy, None, xlib.root, 0, 0, 0, 0, @as(c_int, ctx.input.mouse.prev.x), @as(c_int, ctx.input.mouse.prev.y));
-            XUndefineCursor(xlib.dpy, xlib.root);
+        } else if (ctx.input.mouse.ungrab != 0) {
+            _ = x11.XWarpPointer(dpy, x11.None, self.root, 0, 0, 0, 0, @as(c_int, ctx.input.mouse.prev.x), @as(c_int, ctx.input.mouse.prev.y));
+            _ = x11.XUndefineCursor(dpy, self.root);
             ctx.input.mouse.ungrab = 0;
         }
 
-        if (evt.type == KeyPress or evt.type == KeyRelease) {
+        if (evt.type == x11.KeyPress or evt.type == x11.KeyRelease) {
             // Key handler
-            var ret;
+            // var ret;
             const down = (evt.type == KeyPress);
-            const code: *KeySym = XGetKeyboardMapping(xlib.surf.dpy, @as(KeyCode, evt.xkey.keycode), 1, &ret);
+            const code: *KeySym = x11.XGetKeyboardMapping(xlib.surf.dpy, @as(KeyCode, evt.xkey.keycode), 1, &ret);
             if (code.* == XK_Shift_L or code.* == XK_Shift_R) {
                 nk.input.key(ctx, NK_KEY_SHIFT, down);
             } else if (code.* == XK_Control_L or code.* == XK_Control_R) nk.input.key(ctx, NK_KEY_CTRL, down) else if (code.* == XK_Delete) nk.input.key(ctx, NK_KEY_DEL, down) else if (code.* == XK_Return) nk.input.key(ctx, NK_KEY_ENTER, down) else if (code.* == XK_Tab) nk.input.key(ctx, NK_KEY_TAB, down) else if (code.* == XK_Left) nk.input.key(ctx, NK_KEY_LEFT, down) else if (code.* == XK_Right) nk.input.key(ctx, NK_KEY_RIGHT, down) else if (code.* == XK_Up) nk.input.key(ctx, NK_KEY_UP, down) else if (code.* == XK_Down) nk.input.key(ctx, NK_KEY_DOWN, down) else if (code.* == XK_BackSpace) nk.input.key(ctx, NK_KEY_BACKSPACE, down) else if (code.* == XK_Escape) nk.input.key(ctx, NK_KEY_TEXT_RESET_MODE, down) else if (code.* == XK_Page_Up) nk.input.key(ctx, NK_KEY_SCROLL_UP, down) else if (code.* == XK_Page_Down) nk.input.key(ctx, NK_KEY_SCROLL_DOWN, down) else if (code.* == XK_Home) {
@@ -662,15 +652,15 @@ const Driver = struct {
                     nk.input.key(ctx, NK_KEY_TEXT_REPLACE_MODE, down);
                 }
 
-                if (down) {
+                if (down != 0) {
                     var buf: [32]u8 = undefined;
                     var keysym: KeySym = 0;
-                    if (XLookupString(@ptrCast(*XKeyEvent, evt), buf, 32, &keysym, null) != NoSymbol)
+                    if (x11.XLookupString(@ptrCast(*XKeyEvent, evt), buf, 32, &keysym, null) != NoSymbol)
                         nk.input.glyph(ctx, buf);
                 }
             }
 
-            XFree(code);
+            x11.XFree(code);
             return 1;
         } else if (evt.type == ButtonPress or evt.type == ButtonRelease) {
             // Button handler
@@ -705,13 +695,13 @@ const Driver = struct {
             if (ctx.input.mouse.grabbed) {
                 ctx.input.mouse.pos.x = ctx.input.mouse.prev.x;
                 ctx.input.mouse.pos.y = ctx.input.mouse.prev.y;
-                XWarpPointer(xlib.dpy, None, xlib.surf.root, 0, 0, 0, 0, ctx.input.mouse.pos.x, ctx.input.mouse.pos.y);
+                _ = x11.XWarpPointer(xlib.dpy, None, xlib.surf.root, 0, 0, 0, 0, ctx.input.mouse.pos.x, ctx.input.mouse.pos.y);
             }
             return 1;
         } else if (evt.type == Expose or evt.type == ConfigureNotify) {
             // Window resize handler
             var attr: XWindowAttributes = undefined;
-            XGetWindowAttributes(dpy, win, &attr);
+            _ = x11.XGetWindowAttributes(dpy, win, &attr);
 
             const width = attr.width;
             const height = attr.height;
@@ -719,12 +709,12 @@ const Driver = struct {
             nk_xsurf_resize(xlib.surf, width, height);
             return 1;
         } else if (evt.type == KeymapNotify) {
-            XRefreshKeyboardMapping(&evt.xmapping);
+            _ = x11.XRefreshKeyboardMapping(&evt.xmapping);
             return 1;
         } else if (evt.type == SelectionClear) {
-            free(xlib.clipboard_data);
-            xlib.clipboard_data = NULL;
-            xlib.clipboard_len = 0;
+            xlib.free(self.clipboard_data);
+            self.clipboard_data = NULL;
+            self.clipboard_len = 0;
             return 1;
         } else if (evt.type == SelectionRequest) {
             var reply: XEvent = undefined;
@@ -743,18 +733,18 @@ const Driver = struct {
                 target_list[3] = XA_STRING;
 
                 reply.xselection.property = evt.xselectionrequest.property;
-                XChangeProperty(evt.xselection.display, evt.xselectionrequest.requestor, reply.xselection.property, XA_ATOM, 32, PropModeReplace, &target_list, // (unsigned char*)
+                _=x11.XChangeProperty(evt.xselection.display, evt.xselectionrequest.requestor, reply.xselection.property, XA_ATOM, 32, PropModeReplace, &target_list, // (unsigned char*)
                     4);
             } else if (xlib.clipboard_data != 0 and (reply.xselection.target == xlib.xa_text or
                 reply.xselection.target == xlib.xa_utf8_string or reply.xselection.target == XA_STRING))
             {
                 reply.xselection.property = evt.xselectionrequest.property;
-                XChangeProperty(evt.xselection.display, evt.xselectionrequest.requestor, reply.xselection.property, reply.xselection.target, 8, PropModeReplace, xlib.clipboard_data // (unsigned char*)
+                _=x11.XChangeProperty(evt.xselection.display, evt.xselectionrequest.requestor, reply.xselection.property, reply.xselection.target, 8, PropModeReplace, xlib.clipboard_data // (unsigned char*)
 
                 , xlib.clipboard_len);
             }
-            XSendEvent(evt.xselection.display, evt.xselectionrequest.requestor, true, 0, &reply);
-            XFlush(evt.xselection.display);
+            _= x11.XSendEvent(evt.xselection.display, evt.xselectionrequest.requestor, true, 0, &reply);
+            _=x11.XFlush(evt.xselection.display);
             return 1;
         } else if (evt.type == SelectionNotify and xlib.clipboard_target) {
             if ((evt.xselection.target != XA_STRING) and
@@ -764,16 +754,16 @@ const Driver = struct {
 
             {
                 var actual_type: Atom = undefined;
-                var actual_format: u32;
+                var actual_format: u32 = undefined;
                 var pos: u64 = 0;
                 var len: usize = 0;
                 var remain = 1; // for do while ...
                 var data: [*c]const u8 = "";
                 while (remain != 0) {
-                    XGetWindowProperty(dpy, win, XA_PRIMARY, @as(c_int, pos), 1024, False, AnyPropertyType, &actual_type, &actual_format, &len, &remain, &data);
+                    _= x11.XGetWindowProperty(dpy, win, XA_PRIMARY, @as(c_int, pos), 1024, False, x11.AnyPropertyType, &actual_type, &actual_format, &len, &remain, &data);
                     if (len != 0 and data != 0)
                         nk.textedit.text(xlib.clipboard_target, data, len);
-                    if (data != 0) XFree(data);
+                    if (data != 0) x11.XFree(data);
                     pos += (len * @as(u64, actual_format)) / 32;
                 }
                 return 1;
@@ -785,28 +775,17 @@ const Driver = struct {
     //////////////////////////////////////////////////////////////////////////////
     // rendering
 
-
-
-
-
-fn render(self: *Self, ctx:*nk.Context) void {
-
-}
-
-
-    fn nk_xlib_render(ctx: *nk.Context, screen: Drawable) void {
+    fn render(self: *Self, ctx: *nk.Context, surf: *XSurface) anyerror!void {
         // struct nk_color clear
-        const surf: *XSurface = xlib.surf;
+        const clear = nk.rgb(0, 0, 0);
 
-        nk_xsurf_clear(xlib.surf, nk_color_from_byte(&clear.r));
+        nk_xsurf_clear(surf, clear);
 
         if (ctx.*.memory.size > 0) {
             var itCmd = nk.iterator(ctx);
 
             while (itCmd.next()) |cmd| {
                 switch (cmd) {
-
-                    // case NK_COMMAND_NOP: break;
                     .scissor => {
                         const s = cmd.scissor;
                         nk_xsurf_scissor(surf, s.x, s.y, s.w, s.h);
@@ -864,7 +843,10 @@ fn render(self: *Self, ctx:*nk.Context) void {
                         const i = cmd.image;
                         nk_xsurf_draw_image(surf, i.x, i.y, i.w, i.h, i.img, i.col);
                     },
-                    _ => {},
+                    .rect_multi_color => {},
+                    .custom => {},
+                    .arc_filled => {},
+                    .arc => {},
                     // case NK_COMMAND_RECT_MULTI_COLOR:
                     // case NK_COMMAND_ARC:
                     // case NK_COMMAND_ARC_FILLED:

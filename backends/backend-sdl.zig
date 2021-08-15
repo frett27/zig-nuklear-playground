@@ -42,7 +42,7 @@ pub fn init(allocator: *std.mem.Allocator) !*Backend {
     
     b._loadImage = &Driver.loadImage;
     b._freeImage = &Driver.freeImage;
-    
+
     b._createWindow = &createWindow;
 
     b._render = &Driver.render;
@@ -273,7 +273,7 @@ pub const Driver = struct {
 
                         // ToDo handle l->line_thickness
 
-                        const p = command.polygon_filled;
+                        const p = command.polygon;
                         const color = p.color;
 
                         const colori: Uint32 = @as(u32, color.r) | @as(u32, color.g) << 8 | @as(u32, color.g) << 16 | @as(u32, color.a) << 24;

@@ -39,15 +39,10 @@ pub fn main() !void {
     var ctx = nk.initFixed(memory, font);
 
     // init x11 backend
-    try nkx11.init(globalAllocator);
-
-    // create the main window
-    var win: *nkx11.X11_Window = try nkx11.createWindow();
-
-    var nkX11 = try nkx11.Driver.init(globalAllocator, win);
+    var backend  = try nkx11.init(globalAllocator);
 
 
-    nkstyle.setStyle(&ctx, nkstyle.Theme.THEME_BLUE);
+    // nkstyle.setStyle(&ctx, nkstyle.Theme.THEME_BLUE);
 
 
     /////////////////////////////////////////
@@ -70,7 +65,7 @@ pub fn main() !void {
 
     var checkstate = true;
 
-    var img = try nkX11.loadImage("zig.png");
+    // var img = try nkx11.loadImage("zig.png");
 
     var bounds: nk.Rect = nk.rest.nkGetNullRect();
 
@@ -79,7 +74,7 @@ pub fn main() !void {
     var menu_slider: c_int = 0;
 
     while (running) {
-        running = nkX11.handleAllCurrentEvents(win, &ctx);
+        running = try backend.handleAllCurrentEvents(&ctx);
 
         // // GUI
         const WindowID = "Demo";
@@ -108,7 +103,7 @@ pub fn main() !void {
 
             // an image
             nk.layout.rowStatic(&ctx, 100, 500, 1);
-            nk.text.image(&ctx, img);
+            // nk.text.image(&ctx, img);
 
             // a button
             nk.layout.rowStatic(&ctx, 30, 400, 1);
@@ -203,6 +198,6 @@ pub fn main() !void {
         nk.window.end(&ctx);
 
         // Draw
-        try nkX11.render(&ctx, win, 0);
+        try backend.render(&ctx);
     }
 }
